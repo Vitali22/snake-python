@@ -16,6 +16,11 @@ SPECIAL_FOOD_TICKS = 45
 OBSTACLE_EVERY_POINTS = 4
 MAX_OBSTACLES = 28
 HIGH_SCORE_FILE = Path(__file__).with_name("high_score.json")
+GAME_VERSION = "1.1.0"
+BOMB_DISTANCE = 5
+BOMB_TICKS = 7
+BOMB_SPAWN_CHANCE = 0.18
+BOMB_MIN_SCORE = 2
 
 BACKGROUND = "#111827"
 GRID_LINE = "#1f2937"
@@ -25,6 +30,9 @@ FOOD = "#ef4444"
 SPECIAL_FOOD = "#f59e0b"
 OBSTACLE = "#4b5563"
 OBSTACLE_EDGE = "#9ca3af"
+BOMB = "#111827"
+BOMB_FUSE = "#f97316"
+BOMB_TEXT = "#fef3c7"
 TEXT = "#f9fafb"
 MUTED_TEXT = "#9ca3af"
 
@@ -32,7 +40,7 @@ MUTED_TEXT = "#9ca3af"
 class SnakeGame:
     def __init__(self, root):
         self.root = root
-        self.root.title("Snake")
+        self.root.title(f"Snake v{GAME_VERSION}")
         self.root.resizable(False, False)
 
         self.width = GRID_WIDTH * CELL_SIZE
@@ -99,6 +107,7 @@ class SnakeGame:
         self.direction = (1, 0)
         self.next_direction = (1, 0)
         self.obstacles = set()
+        self.bombs = {}
         self.food = self.place_food()
         self.special_food = None
         self.special_food_ticks = 0
@@ -133,10 +142,11 @@ class SnakeGame:
 
         if (
             self.hit_wall(new_head)
+            or self.hit_bomb(new_head)
             or self.hit_obstacle(new_head)
             or self.hit_self(new_head, grows=ate_food or ate_special)
         ):
-            self.end_game()
+            self.end_game(exploded=self.hit_bomb(new_head))
             return
 
         self.snake.insert(0, new_head)
@@ -156,6 +166,8 @@ class SnakeGame:
             self.snake.pop()
 
         self.update_special_food_timer()
+        self.update_bombs()
+        self.maybe_spawn_bomb()
         self.draw()
         self.schedule_tick()
 
@@ -170,6 +182,9 @@ class SnakeGame:
     def hit_obstacle(self, position):
         return position in self.obstacles
 
+    def hit_bomb(self, position):
+        return position in self.bombs
+
     def place_food(self):
         available_cells = self.available_cells()
         if not available_cells:
@@ -180,6 +195,7 @@ class SnakeGame:
     def available_cells(self):
         blocked = set(getattr(self, "snake", []))
         blocked.update(getattr(self, "obstacles", set()))
+        blocked.update(getattr(self, "bombs", {}).keys())
         food = getattr(self, "food", None)
         special_food = getattr(self, "special_food", None)
         if food:
@@ -229,9 +245,46 @@ class SnakeGame:
             self.special_food = None
             self.status_var.set("Come la comida roja")
 
+    def update_bombs(self):
+        expired_bombs = []
+        for position in self.bombs:
+            self.bombs[position] -= 1
+            if self.bombs[position] <= 0:
+                expired_bombs.append(position)
+
+        for position in expired_bombs:
+            del self.bombs[position]
+
+    def maybe_spawn_bomb(self):
+        if self.score < BOMB_MIN_SCORE:
+            return
+        if random.random() > BOMB_SPAWN_CHANCE:
+            return
+
+        head_x, head_y = self.snake[0]
+        move_x, move_y = self.direction
+        bomb_position = (
+            head_x + move_x * BOMB_DISTANCE,
+            head_y + move_y * BOMB_DISTANCE,
+        )
+
+        if self.can_place_bomb(bomb_position):
+            self.bombs[bomb_position] = BOMB_TICKS
+            self.status_var.set("Bomba adelante: cambia de camino")
+
+    def can_place_bomb(self, position):
+        x, y = position
+        if x < 0 or x >= GRID_WIDTH or y < 0 or y >= GRID_HEIGHT:
+            return False
+        blocked = set(self.snake)
+        blocked.update(self.obstacles)
+        blocked.update(self.bombs.keys())
+        blocked.update(cell for cell in [self.food, self.special_food] if cell is not None)
+        return position not in blocked
+
     def update_scoreboard(self):
         self.score_var.set(
-            f"Puntos: {self.score} | Nivel: {self.level} | Record: {self.high_score}"
+            f"v{GAME_VERSION} | Puntos: {self.score} | Nivel: {self.level} | Record: {self.high_score}"
         )
 
     def on_key_press(self, event):
@@ -261,16 +314,19 @@ class SnakeGame:
     def is_opposite(self, first, second):
         return first[0] + second[0] == 0 and first[1] + second[1] == 0
 
-    def end_game(self):
+    def end_game(self, exploded=False):
         self.game_over = True
         if self.score > self.high_score:
             self.high_score = self.score
             self.save_high_score()
             self.update_scoreboard()
-        self.status_var.set("Fin del juego | Presiona R para reiniciar")
+        if exploded:
+            self.status_var.set("Boom | Presiona R para reiniciar")
+        else:
+            self.status_var.set("Fin del juego | Presiona R para reiniciar")
         self.draw()
         self.draw_overlay(
-            "GAME OVER",
+            "BOOM" if exploded else "GAME OVER",
             f"Puntuacion final: {self.score}",
             "Presiona R para volver a jugar",
         )
@@ -320,6 +376,9 @@ class SnakeGame:
         for obstacle in self.obstacles:
             self.draw_cell(obstacle, OBSTACLE, outline=OBSTACLE_EDGE)
 
+        for bomb_position, ticks_left in self.bombs.items():
+            self.draw_bomb(bomb_position, ticks_left)
+
         if self.food is not None:
             self.draw_cell(self.food, FOOD, rounded=True)
 
@@ -351,6 +410,26 @@ class SnakeGame:
             self.canvas.create_oval(left, top, right, bottom, fill=color, outline=outline)
         else:
             self.canvas.create_rectangle(left, top, right, bottom, fill=color, outline=outline)
+
+    def draw_bomb(self, position, ticks_left):
+        x, y = position
+        padding = 3
+        left = x * CELL_SIZE + padding
+        top = y * CELL_SIZE + padding
+        right = (x + 1) * CELL_SIZE - padding
+        bottom = (y + 1) * CELL_SIZE - padding
+        center_x = x * CELL_SIZE + CELL_SIZE // 2
+        center_y = y * CELL_SIZE + CELL_SIZE // 2
+
+        self.canvas.create_oval(left, top + 3, right, bottom, fill=BOMB, outline=BOMB_FUSE, width=2)
+        self.canvas.create_line(center_x, top + 3, center_x + 6, top - 2, fill=BOMB_FUSE, width=2)
+        self.canvas.create_text(
+            center_x,
+            center_y + 1,
+            text=str(max(1, ticks_left)),
+            fill=BOMB_TEXT,
+            font=("Segoe UI", 8, "bold"),
+        )
 
     def load_high_score(self):
         try:
