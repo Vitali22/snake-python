@@ -1,53 +1,65 @@
 # Snake en Python
 
-Version actual: `1.4.0`
+Version actual: `1.6.0`
 
-Un juego de Snake hecho con `tkinter`, sin instalar paquetes extra.
+Juego de Snake hecho con `tkinter`, sin instalar paquetes extra.
 
-## Como jugar
-
-Ejecuta:
+## Ejecutar
 
 ```bash
 python snake.py
 ```
 
-Controles:
+## Controles
 
-- 1, 2 o 3: elegir nivel al iniciar
+- `1`, `2` o `3`: elegir nivel al iniciar
 - Flechas del teclado o WASD: mover la serpiente
 - Espacio: pausar o continuar
-- R: reiniciar
-- L: volver al menu de niveles
+- `R`: reiniciar
+- `L`: volver al menu de niveles
+- `M`: silenciar o activar sonidos
 
-## Cosas interesantes
+## Niveles
 
-- Nivel 1, Clasico: comida, obstaculos y bombas suaves
-- Nivel 2, Persecucion: un fantasmita lento te sigue
-- Nivel 3, Caos: dos fantasmitas, bombas con menos tiempo y jefes a los 20, 30 y 40 segundos
-- Si sobrevives al jefe de los 40 segundos en nivel 3, ganas
-- Escudo azul: te protege por unos segundos de bombas, fantasmas y jefes
-- Los fantasmitas explotan si chocan contra el cuerpo de la serpiente, te dan una vida, pero te atrapan si llegan a la cabeza
-- Comida roja: suma 1 punto
-- Comida dorada: aparece por tiempo limitado y suma 3 puntos
-- Obstaculos: van apareciendo conforme subes tu puntuacion
-- Bombitas: aparecen de pronto cinco casillas adelante; cambia de camino o explotas
-- Vidas: empiezas con 3 y puedes ganar mas
-- Records por nivel: se guardan en `high_score.json`
+- Nivel 1, Clasico: comida, obstaculos, bombas suaves y jefes.
+- Nivel 2, Persecucion: agrega un fantasmita lento que te sigue.
+- Nivel 3, Caos: agrega mas fantasmitas, bombas con menos tiempo y jefes mas tensos.
 
-Come, esquiva los obstaculos y busca superar tu record.
+## Comida y crecimiento
 
-## GitHub
+- Comida roja: suma 1 punto.
+- Comida dorada: aparece por tiempo limitado y suma 3 puntos.
+- Mientras mas comes, mas larga se vuelve la serpiente.
+- Ser mas grande tambien puede ayudarte: los fantasmitas que chocan contra el cuerpo explotan y te dan una vida.
 
-Para guardar cambios en Git:
+## Vidas y escudo
 
-```bash
-git add snake.py README.md CHANGELOG.md .gitignore
-git commit -m "Agregar escudo vidas sonidos y jefe"
-```
+- Empiezas con 3 vidas.
+- Si un fantasmita choca contra el cuerpo de la serpiente, explota y ganas 1 vida.
+- Si un fantasmita toca la cabeza, pierdes una vida.
+- El escudo azul te protege por unos segundos de fantasmas, bombas y jefes.
+- Cuando ganas una vida por un fantasmita, aparece una senal morada delante de la cabeza.
 
-Para subirlos a GitHub:
+## Bombas
 
-```bash
-git push
-```
+- Las bombas aparecen de pronto cinco casillas adelante.
+- Si no cambias de camino y no tienes escudo, pierdes una vida.
+
+## Jefes
+
+- Los jefes aparecen en todos los niveles a los 20, 30 y 40 segundos.
+- El marcador muestra cuanto falta para el proximo jefe.
+- El jefe aparece rojo al principio: si lo tocas, pierdes una vida.
+- Al final de su aparicion, el jefe se vuelve verde.
+- Cuando el jefe esta verde, la serpiente se lo puede comer.
+- Comer al jefe verde muestra una recompensa visual `+5`.
+- Si te comes al jefe de los 40 segundos, ganas la partida.
+
+## Records
+
+- Cada nivel tiene su propio record.
+- Los records se guardan en `high_score.json`.
+
+## Creditos
+
+- Reglas creadas por Emilio Vitali Padilla Socconini.

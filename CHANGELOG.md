@@ -1,5 +1,20 @@
 # Historial de versiones
 
+## 1.6.0
+
+- Agrega la tecla `M` para silenciar o activar sonidos.
+- Agrega recompensa visual `+5` flotante al comer un jefe verde.
+
+## 1.5.0
+
+- Agrega un marco visible alrededor del tablero.
+- Los jefes aparecen en todos los niveles.
+- Agrega cronometro para saber cuando aparece el proximo jefe.
+- El jefe se vuelve verde cuando se puede comer.
+- Comer al jefe de 40 segundos gana la partida.
+- Agrega una senal morada delante de la cabeza cuando un fantasmita da una vida extra.
+- Reorganiza el README por secciones de reglas y quita la seccion de GitHub.
+
 ## 1.4.0
 
 - Baja la velocidad general de la serpiente.

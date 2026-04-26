@@ -18,16 +18,19 @@ SPECIAL_FOOD_TICKS = 45
 OBSTACLE_EVERY_POINTS = 4
 MAX_OBSTACLES = 28
 HIGH_SCORE_FILE = Path(__file__).with_name("high_score.json")
-GAME_VERSION = "1.4.0"
+GAME_VERSION = "1.6.0"
 BOMB_DISTANCE = 5
 EXPLOSION_TICKS = 5
+FLOATING_TEXT_TICKS = 18
 STARTING_LIVES = 3
 MAX_LIVES = 6
 SHIELD_CHANCE = 0.18
 SHIELD_TICKS = 55
 BOSS_TIMES = [20, 30, 40]
 BOSS_DURATION_SECONDS = 7
+BOSS_VULNERABLE_SECONDS = 3
 BOSS_MOVE_EVERY = 5
+BOSS_POINTS = 5
 
 DIFFICULTY_CONFIG = {
     1: {
@@ -82,6 +85,9 @@ EXPLOSION = "#f97316"
 EXPLOSION_CORE = "#fde047"
 BOSS = "#dc2626"
 BOSS_EDGE = "#fecaca"
+BOSS_VULNERABLE = "#22c55e"
+BOSS_VULNERABLE_EDGE = "#bbf7d0"
+BOARD_BORDER = "#e5e7eb"
 TEXT = "#f9fafb"
 MUTED_TEXT = "#9ca3af"
 
@@ -124,14 +130,16 @@ class SnakeGame:
             width=self.width,
             height=self.height,
             bg=BACKGROUND,
-            highlightthickness=0,
+            highlightthickness=3,
+            highlightbackground=BOARD_BORDER,
+            highlightcolor=BOARD_BORDER,
         )
         self.canvas.pack()
 
         footer = tk.Frame(root, bg=BACKGROUND, padx=12, pady=10)
         footer.pack(fill="x")
 
-        controls = "1/2/3 elegir nivel | Flechas o WASD moverte | Espacio pausar | R reiniciar | L niveles"
+        controls = "1/2/3 elegir nivel | Flechas o WASD moverte | Espacio pausar | R reiniciar | L niveles | M sonido"
         tk.Label(
             footer,
             text=controls,
@@ -142,6 +150,7 @@ class SnakeGame:
 
         self.root.bind("<KeyPress>", self.on_key_press)
         self.after_id = None
+        self.sound_enabled = True
         self.high_scores = self.load_high_scores()
         self.selected_level = 1
         self.config = DIFFICULTY_CONFIG[self.selected_level]
@@ -185,7 +194,9 @@ class SnakeGame:
         self.shield_ticks = 0
         self.lives = STARTING_LIVES
         self.ghost_tick = 0
+        self.extra_life_ticks = 0
         self.explosions = {}
+        self.floating_texts = []
         self.ghosts = self.create_ghosts()
         self.boss_cells = set()
         self.boss_active = False
@@ -232,6 +243,11 @@ class SnakeGame:
         if self.hit_wall(new_head) or self.hit_obstacle(new_head):
             self.end_game()
             return
+        if hit_boss and self.boss_is_vulnerable():
+            self.eat_boss()
+            if self.game_over:
+                return
+            hit_boss = False
         if hit_bomb or hit_ghost or hit_boss:
             if not self.handle_danger_hit(new_head, hit_bomb, hit_ghost, hit_boss):
                 return
@@ -264,8 +280,10 @@ class SnakeGame:
 
         self.update_special_food_timer()
         self.update_shield_timer()
+        self.update_extra_life_timer()
         self.update_bombs()
         self.update_explosions()
+        self.update_floating_texts()
         self.update_boss()
         if self.game_over:
             return
@@ -386,6 +404,10 @@ class SnakeGame:
         if self.shield_ticks <= 0:
             self.status_var.set("Escudo terminado")
 
+    def update_extra_life_timer(self):
+        if self.extra_life_ticks > 0:
+            self.extra_life_ticks -= 1
+
     def maybe_spawn_shield_power(self):
         if self.shield_power is not None or self.shield_ticks > 0:
             return
@@ -415,6 +437,15 @@ class SnakeGame:
 
         for position in expired_explosions:
             del self.explosions[position]
+
+    def update_floating_texts(self):
+        active_texts = []
+        for text_item in self.floating_texts:
+            text_item["ticks"] -= 1
+            text_item["offset"] += 1
+            if text_item["ticks"] > 0:
+                active_texts.append(text_item)
+        self.floating_texts = active_texts
 
     def handle_danger_hit(self, position, hit_bomb, hit_ghost, hit_boss):
         if self.shield_ticks > 0:
@@ -451,9 +482,6 @@ class SnakeGame:
         self.schedule_tick()
 
     def update_boss(self):
-        if self.selected_level != 3:
-            return
-
         elapsed = int(time.monotonic() - self.started_at)
         for boss_time in BOSS_TIMES:
             if elapsed >= boss_time and boss_time not in self.boss_spawned:
@@ -464,14 +492,10 @@ class SnakeGame:
             return
 
         if time.monotonic() - self.boss_started_at >= BOSS_DURATION_SECONDS:
-            final_boss_defeated = 40 in self.boss_spawned and self.current_boss_time == 40
             self.boss_cells.clear()
             self.boss_active = False
             self.play_sound("bonus")
-            if final_boss_defeated:
-                self.win_game()
-            else:
-                self.status_var.set("Sobreviviste al jefe")
+            self.status_var.set("El jefe se fue")
             return
 
         self.boss_tick += 1
@@ -490,6 +514,41 @@ class SnakeGame:
             return
         self.status_var.set(f"Jefe de {boss_time} segundos")
         self.play_sound("boss")
+
+    def boss_is_vulnerable(self):
+        if not self.boss_active or self.boss_started_at is None:
+            return False
+        return time.monotonic() - self.boss_started_at >= (
+            BOSS_DURATION_SECONDS - BOSS_VULNERABLE_SECONDS
+        )
+
+    def eat_boss(self):
+        self.score += BOSS_POINTS
+        boss_center = self.boss_center()
+        self.floating_texts.append(
+            {
+                "position": boss_center,
+                "text": f"+{BOSS_POINTS}",
+                "ticks": FLOATING_TEXT_TICKS,
+                "offset": 0,
+                "color": BOSS_VULNERABLE_EDGE,
+            }
+        )
+        self.boss_cells.clear()
+        self.boss_active = False
+        self.play_sound("win" if self.current_boss_time == 40 else "bonus")
+        self.after_food_eaten()
+        if self.current_boss_time == 40:
+            self.win_game()
+        else:
+            self.status_var.set("Te comiste al jefe verde")
+
+    def boss_center(self):
+        if not self.boss_cells:
+            return self.snake[0]
+        x_values = [cell[0] for cell in self.boss_cells]
+        y_values = [cell[1] for cell in self.boss_cells]
+        return (sum(x_values) / len(x_values), sum(y_values) / len(y_values))
 
     def create_boss_cells(self):
         head_x, head_y = self.snake[0]
@@ -593,6 +652,7 @@ class SnakeGame:
             elif next_position in snake_body:
                 self.explosions[next_position] = EXPLOSION_TICKS
                 self.lives = min(MAX_LIVES, self.lives + 1)
+                self.extra_life_ticks = 20
                 self.status_var.set("Fantasmita exploto: ganaste una vida")
                 self.play_sound("explode")
                 self.update_scoreboard()
@@ -634,9 +694,25 @@ class SnakeGame:
     def update_scoreboard(self):
         record = self.high_scores.get(str(self.selected_level), 0)
         shield = f" | Escudo: {self.shield_ticks}" if self.shield_ticks > 0 else ""
+        boss = f" | Boss: {self.boss_timer_text()}"
         self.score_var.set(
-            f"v{GAME_VERSION} | Modo {self.selected_level} | Puntos: {self.score} | Vidas: {self.lives} | Record: {record}{shield}"
+            f"v{GAME_VERSION} | Modo {self.selected_level} | P:{self.score} | V:{self.lives} | R:{record}{shield}{boss}"
         )
+
+    def boss_timer_text(self):
+        if self.boss_active:
+            remaining = max(
+                0,
+                BOSS_DURATION_SECONDS - int(time.monotonic() - self.boss_started_at),
+            )
+            state = "verde" if self.boss_is_vulnerable() else "rojo"
+            return f"{state} {remaining}s"
+
+        elapsed = int(time.monotonic() - self.started_at)
+        for boss_time in BOSS_TIMES:
+            if boss_time not in self.boss_spawned:
+                return f"{max(0, boss_time - elapsed)}s"
+        return "listo"
 
     def on_key_press(self, event):
         key = event.keysym.lower()
@@ -668,6 +744,9 @@ class SnakeGame:
             self.reset()
         elif key == "l":
             self.show_level_menu()
+        elif key == "m":
+            self.sound_enabled = not self.sound_enabled
+            self.status_var.set("Sonidos activados" if self.sound_enabled else "Sonidos silenciados")
 
     def is_opposite(self, first, second):
         return first[0] + second[0] == 0 and first[1] + second[1] == 0
@@ -815,8 +894,13 @@ class SnakeGame:
         for explosion_position, ticks_left in self.explosions.items():
             self.draw_explosion(explosion_position, ticks_left)
 
+        for text_item in self.floating_texts:
+            self.draw_floating_text(text_item)
+
+        boss_color = BOSS_VULNERABLE if self.boss_is_vulnerable() else BOSS
+        boss_outline = BOSS_VULNERABLE_EDGE if self.boss_is_vulnerable() else BOSS_EDGE
         for boss_cell in self.boss_cells:
-            self.draw_cell(boss_cell, BOSS, outline=BOSS_EDGE)
+            self.draw_cell(boss_cell, boss_color, outline=boss_outline)
 
         for index, ghost in enumerate(self.ghosts):
             self.draw_ghost(ghost, index)
@@ -836,6 +920,9 @@ class SnakeGame:
 
         if self.shield_ticks > 0:
             self.draw_active_shield()
+
+        if self.extra_life_ticks > 0:
+            self.draw_extra_life_hint()
 
         if self.paused and not self.game_over:
             self.draw_overlay("PAUSA", "Respira tantito", "Presiona espacio para continuar")
@@ -932,6 +1019,39 @@ class SnakeGame:
             width=3,
         )
 
+    def draw_extra_life_hint(self):
+        head_x, head_y = self.snake[0]
+        move_x, move_y = self.direction
+        hint_position = (head_x + move_x, head_y + move_y)
+        x, y = hint_position
+        if x < 0 or x >= GRID_WIDTH or y < 0 or y >= GRID_HEIGHT:
+            return
+        padding = 5
+        left = x * CELL_SIZE + padding
+        top = y * CELL_SIZE + padding
+        right = (x + 1) * CELL_SIZE - padding
+        bottom = (y + 1) * CELL_SIZE - padding
+        self.canvas.create_oval(left, top, right, bottom, fill=GHOST, outline=GHOST_EYE, width=2)
+        self.canvas.create_text(
+            x * CELL_SIZE + CELL_SIZE // 2,
+            y * CELL_SIZE + CELL_SIZE // 2,
+            text="+1",
+            fill=TEXT,
+            font=("Segoe UI", 9, "bold"),
+        )
+
+    def draw_floating_text(self, text_item):
+        x, y = text_item["position"]
+        center_x = x * CELL_SIZE + CELL_SIZE // 2
+        center_y = y * CELL_SIZE + CELL_SIZE // 2 - text_item["offset"]
+        self.canvas.create_text(
+            center_x,
+            center_y,
+            text=text_item["text"],
+            fill=text_item["color"],
+            font=("Segoe UI", 16, "bold"),
+        )
+
     def draw_ghost(self, position, index):
         x, y = position
         padding = 3
@@ -968,6 +1088,8 @@ class SnakeGame:
             json.dump({"high_scores": self.high_scores}, file)
 
     def play_sound(self, sound_name):
+        if not self.sound_enabled:
+            return
         sounds = {
             "eat": (880, 55),
             "bonus": (1175, 90),
