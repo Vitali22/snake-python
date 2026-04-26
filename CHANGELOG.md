@@ -1,5 +1,12 @@
 # Historial de versiones
 
+## 1.3.0
+
+- Aumenta el tamano de los cuadros para que el juego sea mas legible.
+- Hace el movimiento un poquito mas rapido.
+- Los fantasmitas explotan y desaparecen si chocan contra el cuerpo de la serpiente.
+- Mantiene la derrota cuando un fantasmita toca la cabeza.
+
 ## 1.2.0
 
 - Agrega menu para elegir nivel 1, 2 o 3.

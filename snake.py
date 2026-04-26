@@ -4,7 +4,7 @@ import tkinter as tk
 from pathlib import Path
 
 
-CELL_SIZE = 24
+CELL_SIZE = 28
 GRID_WIDTH = 24
 GRID_HEIGHT = 18
 START_SPEED_MS = 130
@@ -16,14 +16,15 @@ SPECIAL_FOOD_TICKS = 45
 OBSTACLE_EVERY_POINTS = 4
 MAX_OBSTACLES = 28
 HIGH_SCORE_FILE = Path(__file__).with_name("high_score.json")
-GAME_VERSION = "1.2.0"
+GAME_VERSION = "1.3.0"
 BOMB_DISTANCE = 5
+EXPLOSION_TICKS = 5
 
 DIFFICULTY_CONFIG = {
     1: {
         "name": "Clasico",
-        "start_speed": 135,
-        "min_speed": 70,
+        "start_speed": 128,
+        "min_speed": 66,
         "bomb_chance": 0.14,
         "bomb_ticks": 8,
         "bomb_min_score": 3,
@@ -32,8 +33,8 @@ DIFFICULTY_CONFIG = {
     },
     2: {
         "name": "Persecucion",
-        "start_speed": 130,
-        "min_speed": 65,
+        "start_speed": 123,
+        "min_speed": 62,
         "bomb_chance": 0.18,
         "bomb_ticks": 7,
         "bomb_min_score": 2,
@@ -42,8 +43,8 @@ DIFFICULTY_CONFIG = {
     },
     3: {
         "name": "Caos",
-        "start_speed": 115,
-        "min_speed": 55,
+        "start_speed": 110,
+        "min_speed": 54,
         "bomb_chance": 0.28,
         "bomb_ticks": 5,
         "bomb_min_score": 1,
@@ -66,6 +67,8 @@ BOMB_TEXT = "#fef3c7"
 GHOST = "#a78bfa"
 GHOST_DARK = "#7c3aed"
 GHOST_EYE = "#f8fafc"
+EXPLOSION = "#f97316"
+EXPLOSION_CORE = "#fde047"
 TEXT = "#f9fafb"
 MUTED_TEXT = "#9ca3af"
 
@@ -163,6 +166,7 @@ class SnakeGame:
         self.special_food = None
         self.special_food_ticks = 0
         self.ghost_tick = 0
+        self.explosions = {}
         self.ghosts = self.create_ghosts()
         self.food = self.place_food()
         self.score = 0
@@ -224,6 +228,7 @@ class SnakeGame:
 
         self.update_special_food_timer()
         self.update_bombs()
+        self.update_explosions()
         self.maybe_spawn_bomb()
         if self.update_ghosts():
             self.end_game(caught=True)
@@ -269,6 +274,7 @@ class SnakeGame:
         blocked.update(getattr(self, "obstacles", set()))
         blocked.update(getattr(self, "bombs", {}).keys())
         blocked.update(getattr(self, "ghosts", []))
+        blocked.update(getattr(self, "explosions", {}).keys())
         food = getattr(self, "food", None)
         special_food = getattr(self, "special_food", None)
         if food:
@@ -331,6 +337,16 @@ class SnakeGame:
         for position in expired_bombs:
             del self.bombs[position]
 
+    def update_explosions(self):
+        expired_explosions = []
+        for position in self.explosions:
+            self.explosions[position] -= 1
+            if self.explosions[position] <= 0:
+                expired_explosions.append(position)
+
+        for position in expired_explosions:
+            del self.explosions[position]
+
     def maybe_spawn_bomb(self):
         if self.score < self.config["bomb_min_score"]:
             return
@@ -356,6 +372,7 @@ class SnakeGame:
         blocked.update(self.obstacles)
         blocked.update(self.bombs.keys())
         blocked.update(self.ghosts)
+        blocked.update(self.explosions.keys())
         blocked.update(cell for cell in [self.food, self.special_food] if cell is not None)
         return position not in blocked
 
@@ -367,11 +384,18 @@ class SnakeGame:
             return self.snake[0] in self.ghosts
 
         head = self.snake[0]
+        snake_body = set(self.snake[1:])
         new_ghosts = []
 
         for ghost in self.ghosts:
             next_position = self.next_ghost_step(ghost, head, new_ghosts)
-            new_ghosts.append(next_position)
+            if next_position == head:
+                new_ghosts.append(next_position)
+            elif next_position in snake_body:
+                self.explosions[next_position] = EXPLOSION_TICKS
+                self.status_var.set("Un fantasmita exploto contra tu cuerpo")
+            else:
+                new_ghosts.append(next_position)
 
         self.ghosts = new_ghosts
         return head in self.ghosts
@@ -577,6 +601,9 @@ class SnakeGame:
         for bomb_position, ticks_left in self.bombs.items():
             self.draw_bomb(bomb_position, ticks_left)
 
+        for explosion_position, ticks_left in self.explosions.items():
+            self.draw_explosion(explosion_position, ticks_left)
+
         for index, ghost in enumerate(self.ghosts):
             self.draw_ghost(ghost, index)
 
@@ -630,6 +657,29 @@ class SnakeGame:
             text=str(max(1, ticks_left)),
             fill=BOMB_TEXT,
             font=("Segoe UI", 8, "bold"),
+        )
+
+    def draw_explosion(self, position, ticks_left):
+        x, y = position
+        center_x = x * CELL_SIZE + CELL_SIZE // 2
+        center_y = y * CELL_SIZE + CELL_SIZE // 2
+        radius = 5 + ticks_left * 2
+
+        self.canvas.create_oval(
+            center_x - radius,
+            center_y - radius,
+            center_x + radius,
+            center_y + radius,
+            fill=EXPLOSION,
+            outline="",
+        )
+        self.canvas.create_oval(
+            center_x - radius // 2,
+            center_y - radius // 2,
+            center_x + radius // 2,
+            center_y + radius // 2,
+            fill=EXPLOSION_CORE,
+            outline="",
         )
 
     def draw_ghost(self, position, index):
