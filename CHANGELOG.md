@@ -1,5 +1,12 @@
 # Historial de versiones
 
+## 1.2.0
+
+- Agrega menu para elegir nivel 1, 2 o 3.
+- Nivel 2 incluye un fantasmita lento que persigue a la serpiente.
+- Nivel 3 agrega modo caos con dos fantasmitas y bombas mas peligrosas.
+- Agrega la tecla `L` para volver al menu de niveles.
+
 ## 1.1.0
 
 - Agrega bombitas que aparecen cinco casillas adelante de la serpiente.

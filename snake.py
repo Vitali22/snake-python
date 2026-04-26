@@ -16,11 +16,41 @@ SPECIAL_FOOD_TICKS = 45
 OBSTACLE_EVERY_POINTS = 4
 MAX_OBSTACLES = 28
 HIGH_SCORE_FILE = Path(__file__).with_name("high_score.json")
-GAME_VERSION = "1.1.0"
+GAME_VERSION = "1.2.0"
 BOMB_DISTANCE = 5
-BOMB_TICKS = 7
-BOMB_SPAWN_CHANCE = 0.18
-BOMB_MIN_SCORE = 2
+
+DIFFICULTY_CONFIG = {
+    1: {
+        "name": "Clasico",
+        "start_speed": 135,
+        "min_speed": 70,
+        "bomb_chance": 0.14,
+        "bomb_ticks": 8,
+        "bomb_min_score": 3,
+        "ghost_count": 0,
+        "ghost_move_every": 99,
+    },
+    2: {
+        "name": "Persecucion",
+        "start_speed": 130,
+        "min_speed": 65,
+        "bomb_chance": 0.18,
+        "bomb_ticks": 7,
+        "bomb_min_score": 2,
+        "ghost_count": 1,
+        "ghost_move_every": 4,
+    },
+    3: {
+        "name": "Caos",
+        "start_speed": 115,
+        "min_speed": 55,
+        "bomb_chance": 0.28,
+        "bomb_ticks": 5,
+        "bomb_min_score": 1,
+        "ghost_count": 2,
+        "ghost_move_every": 2,
+    },
+}
 
 BACKGROUND = "#111827"
 GRID_LINE = "#1f2937"
@@ -33,6 +63,9 @@ OBSTACLE_EDGE = "#9ca3af"
 BOMB = "#111827"
 BOMB_FUSE = "#f97316"
 BOMB_TEXT = "#fef3c7"
+GHOST = "#a78bfa"
+GHOST_DARK = "#7c3aed"
+GHOST_EYE = "#f8fafc"
 TEXT = "#f9fafb"
 MUTED_TEXT = "#9ca3af"
 
@@ -82,7 +115,7 @@ class SnakeGame:
         footer = tk.Frame(root, bg=BACKGROUND, padx=12, pady=10)
         footer.pack(fill="x")
 
-        controls = "Flechas o WASD para moverte | Espacio para pausar | R para reiniciar"
+        controls = "1/2/3 elegir nivel | Flechas o WASD moverte | Espacio pausar | R reiniciar | L niveles"
         tk.Label(
             footer,
             text=controls,
@@ -94,9 +127,27 @@ class SnakeGame:
         self.root.bind("<KeyPress>", self.on_key_press)
         self.after_id = None
         self.high_score = self.load_high_score()
-        self.reset()
+        self.selected_level = 1
+        self.config = DIFFICULTY_CONFIG[self.selected_level]
+        self.waiting_for_level = True
+        self.show_level_menu()
 
-    def reset(self):
+    def show_level_menu(self):
+        if self.after_id is not None:
+            self.root.after_cancel(self.after_id)
+            self.after_id = None
+        self.waiting_for_level = True
+        self.game_over = False
+        self.paused = False
+        self.score_var.set(f"v{GAME_VERSION} | Elige nivel | Record: {self.high_score}")
+        self.status_var.set("Presiona 1, 2 o 3")
+        self.draw_level_menu()
+
+    def reset(self, selected_level=None):
+        if selected_level is not None:
+            self.selected_level = selected_level
+        self.config = DIFFICULTY_CONFIG[self.selected_level]
+        self.waiting_for_level = False
         center_x = GRID_WIDTH // 2
         center_y = GRID_HEIGHT // 2
         self.snake = [
@@ -108,26 +159,31 @@ class SnakeGame:
         self.next_direction = (1, 0)
         self.obstacles = set()
         self.bombs = {}
-        self.food = self.place_food()
+        self.food = None
         self.special_food = None
         self.special_food_ticks = 0
+        self.ghost_tick = 0
+        self.ghosts = self.create_ghosts()
+        self.food = self.place_food()
         self.score = 0
         self.level = 1
-        self.speed_ms = START_SPEED_MS
+        self.speed_ms = self.config["start_speed"]
         self.game_over = False
         self.paused = False
         self.update_scoreboard()
-        self.status_var.set("Come la comida roja")
+        self.status_var.set(f"Nivel {self.selected_level}: {self.config['name']}")
         self.draw()
         self.schedule_tick()
 
     def schedule_tick(self):
+        if self.waiting_for_level:
+            return
         if self.after_id is not None:
             self.root.after_cancel(self.after_id)
         self.after_id = self.root.after(self.speed_ms, self.tick)
 
     def tick(self):
-        if self.game_over:
+        if self.game_over or self.waiting_for_level:
             return
         if self.paused:
             self.schedule_tick()
@@ -143,10 +199,11 @@ class SnakeGame:
         if (
             self.hit_wall(new_head)
             or self.hit_bomb(new_head)
+            or self.hit_ghost(new_head)
             or self.hit_obstacle(new_head)
             or self.hit_self(new_head, grows=ate_food or ate_special)
         ):
-            self.end_game(exploded=self.hit_bomb(new_head))
+            self.end_game(exploded=self.hit_bomb(new_head), caught=self.hit_ghost(new_head))
             return
 
         self.snake.insert(0, new_head)
@@ -168,6 +225,9 @@ class SnakeGame:
         self.update_special_food_timer()
         self.update_bombs()
         self.maybe_spawn_bomb()
+        if self.update_ghosts():
+            self.end_game(caught=True)
+            return
         self.draw()
         self.schedule_tick()
 
@@ -185,6 +245,18 @@ class SnakeGame:
     def hit_bomb(self, position):
         return position in self.bombs
 
+    def hit_ghost(self, position):
+        return position in self.ghosts
+
+    def create_ghosts(self):
+        corners = [
+            (2, 2),
+            (GRID_WIDTH - 3, GRID_HEIGHT - 3),
+            (GRID_WIDTH - 3, 2),
+            (2, GRID_HEIGHT - 3),
+        ]
+        return corners[: self.config["ghost_count"]]
+
     def place_food(self):
         available_cells = self.available_cells()
         if not available_cells:
@@ -196,6 +268,7 @@ class SnakeGame:
         blocked = set(getattr(self, "snake", []))
         blocked.update(getattr(self, "obstacles", set()))
         blocked.update(getattr(self, "bombs", {}).keys())
+        blocked.update(getattr(self, "ghosts", []))
         food = getattr(self, "food", None)
         special_food = getattr(self, "special_food", None)
         if food:
@@ -212,7 +285,10 @@ class SnakeGame:
 
     def after_food_eaten(self):
         self.level = 1 + self.score // 5
-        self.speed_ms = max(MIN_SPEED_MS, START_SPEED_MS - self.score * SPEED_STEP)
+        self.speed_ms = max(
+            self.config["min_speed"],
+            self.config["start_speed"] - self.score * SPEED_STEP,
+        )
         self.maybe_add_obstacle()
         self.maybe_spawn_special_food()
         self.update_scoreboard()
@@ -256,9 +332,9 @@ class SnakeGame:
             del self.bombs[position]
 
     def maybe_spawn_bomb(self):
-        if self.score < BOMB_MIN_SCORE:
+        if self.score < self.config["bomb_min_score"]:
             return
-        if random.random() > BOMB_SPAWN_CHANCE:
+        if random.random() > self.config["bomb_chance"]:
             return
 
         head_x, head_y = self.snake[0]
@@ -269,7 +345,7 @@ class SnakeGame:
         )
 
         if self.can_place_bomb(bomb_position):
-            self.bombs[bomb_position] = BOMB_TICKS
+            self.bombs[bomb_position] = self.config["bomb_ticks"]
             self.status_var.set("Bomba adelante: cambia de camino")
 
     def can_place_bomb(self, position):
@@ -279,16 +355,68 @@ class SnakeGame:
         blocked = set(self.snake)
         blocked.update(self.obstacles)
         blocked.update(self.bombs.keys())
+        blocked.update(self.ghosts)
         blocked.update(cell for cell in [self.food, self.special_food] if cell is not None)
         return position not in blocked
 
+    def update_ghosts(self):
+        if not self.ghosts:
+            return False
+        self.ghost_tick += 1
+        if self.ghost_tick % self.config["ghost_move_every"] != 0:
+            return self.snake[0] in self.ghosts
+
+        head = self.snake[0]
+        new_ghosts = []
+
+        for ghost in self.ghosts:
+            next_position = self.next_ghost_step(ghost, head, new_ghosts)
+            new_ghosts.append(next_position)
+
+        self.ghosts = new_ghosts
+        return head in self.ghosts
+
+    def next_ghost_step(self, ghost, target, reserved):
+        x, y = ghost
+        candidates = [
+            (x + 1, y),
+            (x - 1, y),
+            (x, y + 1),
+            (x, y - 1),
+            ghost,
+        ]
+        random.shuffle(candidates)
+        candidates.sort(key=lambda cell: self.distance(cell, target))
+
+        for candidate in candidates:
+            if self.can_ghost_move_to(candidate, reserved):
+                return candidate
+        return ghost
+
+    def can_ghost_move_to(self, position, reserved):
+        x, y = position
+        if x < 0 or x >= GRID_WIDTH or y < 0 or y >= GRID_HEIGHT:
+            return False
+        blocked = set(self.obstacles)
+        blocked.update(self.bombs.keys())
+        blocked.update(reserved)
+        return position not in blocked
+
+    def distance(self, first, second):
+        return abs(first[0] - second[0]) + abs(first[1] - second[1])
+
     def update_scoreboard(self):
         self.score_var.set(
-            f"v{GAME_VERSION} | Puntos: {self.score} | Nivel: {self.level} | Record: {self.high_score}"
+            f"v{GAME_VERSION} | Modo {self.selected_level} | Puntos: {self.score} | Ronda: {self.level} | Record: {self.high_score}"
         )
 
     def on_key_press(self, event):
         key = event.keysym.lower()
+        if self.waiting_for_level:
+            if key in {"1", "2", "3"}:
+                self.reset(int(key))
+            return
+
         directions = {
             "up": (0, -1),
             "w": (0, -1),
@@ -310,11 +438,13 @@ class SnakeGame:
             self.draw()
         elif key == "r":
             self.reset()
+        elif key == "l":
+            self.show_level_menu()
 
     def is_opposite(self, first, second):
         return first[0] + second[0] == 0 and first[1] + second[1] == 0
 
-    def end_game(self, exploded=False):
+    def end_game(self, exploded=False, caught=False):
         self.game_over = True
         if self.score > self.high_score:
             self.high_score = self.score
@@ -322,13 +452,16 @@ class SnakeGame:
             self.update_scoreboard()
         if exploded:
             self.status_var.set("Boom | Presiona R para reiniciar")
+        elif caught:
+            self.status_var.set("Te atraparon | Presiona R para reiniciar")
         else:
             self.status_var.set("Fin del juego | Presiona R para reiniciar")
         self.draw()
+        title = "BOOM" if exploded else "ATRAPADO" if caught else "GAME OVER"
         self.draw_overlay(
-            "BOOM" if exploded else "GAME OVER",
+            title,
             f"Puntuacion final: {self.score}",
-            "Presiona R para volver a jugar",
+            "R reinicia | L cambia nivel",
         )
 
     def win_game(self):
@@ -336,6 +469,71 @@ class SnakeGame:
         self.status_var.set("Ganaste | Presiona R para reiniciar")
         self.draw()
         self.draw_overlay("GANASTE", "Llenaste todo el tablero", "Presiona R para reiniciar")
+
+    def draw_level_menu(self):
+        self.canvas.delete("all")
+        self.draw_grid()
+        self.canvas.create_text(
+            self.width // 2,
+            62,
+            text="ELIGE NIVEL",
+            fill=TEXT,
+            font=("Segoe UI", 28, "bold"),
+        )
+
+        level_cards = [
+            ("1", "Clasico", "Comida, obstaculos y bombas suaves"),
+            ("2", "Persecucion", "Un fantasmita lento te sigue"),
+            ("3", "Caos", "Dos fantasmitas y bombas mas bravas"),
+        ]
+        card_width = 420
+        card_height = 72
+        start_y = 122
+
+        for index, (number, title, description) in enumerate(level_cards):
+            y = start_y + index * 92
+            left = (self.width - card_width) // 2
+            right = left + card_width
+            self.canvas.create_rectangle(
+                left,
+                y,
+                right,
+                y + card_height,
+                fill="#020617",
+                outline=GRID_LINE,
+                width=2,
+            )
+            self.canvas.create_text(
+                left + 34,
+                y + card_height // 2,
+                text=number,
+                fill=SPECIAL_FOOD,
+                font=("Segoe UI", 24, "bold"),
+            )
+            self.canvas.create_text(
+                left + 88,
+                y + 24,
+                text=title,
+                anchor="w",
+                fill=TEXT,
+                font=("Segoe UI", 15, "bold"),
+            )
+            self.canvas.create_text(
+                left + 88,
+                y + 49,
+                text=description,
+                anchor="w",
+                fill=MUTED_TEXT,
+                font=("Segoe UI", 10),
+            )
+
+        self.canvas.create_text(
+            self.width // 2,
+            self.height - 34,
+            text="Presiona 1, 2 o 3 para empezar",
+            fill=MUTED_TEXT,
+            font=("Segoe UI", 12, "bold"),
+        )
 
     def draw_overlay(self, title, subtitle, hint):
         self.canvas.create_rectangle(
@@ -378,6 +576,9 @@ class SnakeGame:
 
         for bomb_position, ticks_left in self.bombs.items():
             self.draw_bomb(bomb_position, ticks_left)
+
+        for index, ghost in enumerate(self.ghosts):
+            self.draw_ghost(ghost, index)
 
         if self.food is not None:
             self.draw_cell(self.food, FOOD, rounded=True)
@@ -430,6 +631,23 @@ class SnakeGame:
             fill=BOMB_TEXT,
             font=("Segoe UI", 8, "bold"),
         )
+
+    def draw_ghost(self, position, index):
+        x, y = position
+        padding = 3
+        left = x * CELL_SIZE + padding
+        top = y * CELL_SIZE + padding
+        right = (x + 1) * CELL_SIZE - padding
+        bottom = (y + 1) * CELL_SIZE - padding
+        color = GHOST if index % 2 == 0 else GHOST_DARK
+
+        self.canvas.create_arc(left, top, right, bottom + 8, start=0, extent=180, fill=color, outline="")
+        self.canvas.create_rectangle(left, top + CELL_SIZE // 2 - 2, right, bottom, fill=color, outline="")
+        for wave in range(3):
+            wave_left = left + wave * 6
+            self.canvas.create_oval(wave_left, bottom - 4, wave_left + 8, bottom + 4, fill=color, outline="")
+        self.canvas.create_oval(left + 5, top + 7, left + 9, top + 11, fill=GHOST_EYE, outline="")
+        self.canvas.create_oval(right - 9, top + 7, right - 5, top + 11, fill=GHOST_EYE, outline="")
 
     def load_high_score(self):
         try:
