@@ -1,5 +1,15 @@
 # Historial de versiones
 
+## 1.4.0
+
+- Baja la velocidad general de la serpiente.
+- Agrega power-up de escudo por tiempo limitado.
+- Agrega vidas; empiezas con 3 y puedes ganar mas.
+- Los fantasmitas que explotan contra el cuerpo de la serpiente dan una vida.
+- Agrega sonidos simples para comer, escudo, explosion, derrota, victoria y jefe.
+- Agrega jefes en nivel 3 a los 20, 30 y 40 segundos; sobrevivir al jefe de 40 segundos gana la partida.
+- Guarda records separados para nivel 1, 2 y 3.
+
 ## 1.3.0
 
 - Aumenta el tamano de los cuadros para que el juego sea mas legible.

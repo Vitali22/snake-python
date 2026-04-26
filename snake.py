@@ -1,6 +1,8 @@
 import json
 import random
 import tkinter as tk
+import time
+import winsound
 from pathlib import Path
 
 
@@ -16,15 +18,22 @@ SPECIAL_FOOD_TICKS = 45
 OBSTACLE_EVERY_POINTS = 4
 MAX_OBSTACLES = 28
 HIGH_SCORE_FILE = Path(__file__).with_name("high_score.json")
-GAME_VERSION = "1.3.0"
+GAME_VERSION = "1.4.0"
 BOMB_DISTANCE = 5
 EXPLOSION_TICKS = 5
+STARTING_LIVES = 3
+MAX_LIVES = 6
+SHIELD_CHANCE = 0.18
+SHIELD_TICKS = 55
+BOSS_TIMES = [20, 30, 40]
+BOSS_DURATION_SECONDS = 7
+BOSS_MOVE_EVERY = 5
 
 DIFFICULTY_CONFIG = {
     1: {
         "name": "Clasico",
-        "start_speed": 128,
-        "min_speed": 66,
+        "start_speed": 160,
+        "min_speed": 92,
         "bomb_chance": 0.14,
         "bomb_ticks": 8,
         "bomb_min_score": 3,
@@ -33,8 +42,8 @@ DIFFICULTY_CONFIG = {
     },
     2: {
         "name": "Persecucion",
-        "start_speed": 123,
-        "min_speed": 62,
+        "start_speed": 155,
+        "min_speed": 88,
         "bomb_chance": 0.18,
         "bomb_ticks": 7,
         "bomb_min_score": 2,
@@ -43,8 +52,8 @@ DIFFICULTY_CONFIG = {
     },
     3: {
         "name": "Caos",
-        "start_speed": 110,
-        "min_speed": 54,
+        "start_speed": 145,
+        "min_speed": 82,
         "bomb_chance": 0.28,
         "bomb_ticks": 5,
         "bomb_min_score": 1,
@@ -59,6 +68,8 @@ SNAKE_HEAD = "#22c55e"
 SNAKE_BODY = "#16a34a"
 FOOD = "#ef4444"
 SPECIAL_FOOD = "#f59e0b"
+SHIELD_POWER = "#38bdf8"
+SHIELD_RING = "#bae6fd"
 OBSTACLE = "#4b5563"
 OBSTACLE_EDGE = "#9ca3af"
 BOMB = "#111827"
@@ -69,6 +80,8 @@ GHOST_DARK = "#7c3aed"
 GHOST_EYE = "#f8fafc"
 EXPLOSION = "#f97316"
 EXPLOSION_CORE = "#fde047"
+BOSS = "#dc2626"
+BOSS_EDGE = "#fecaca"
 TEXT = "#f9fafb"
 MUTED_TEXT = "#9ca3af"
 
@@ -129,7 +142,7 @@ class SnakeGame:
 
         self.root.bind("<KeyPress>", self.on_key_press)
         self.after_id = None
-        self.high_score = self.load_high_score()
+        self.high_scores = self.load_high_scores()
         self.selected_level = 1
         self.config = DIFFICULTY_CONFIG[self.selected_level]
         self.waiting_for_level = True
@@ -142,7 +155,10 @@ class SnakeGame:
         self.waiting_for_level = True
         self.game_over = False
         self.paused = False
-        self.score_var.set(f"v{GAME_VERSION} | Elige nivel | Record: {self.high_score}")
+        records = " | ".join(
+            f"N{level}: {self.high_scores.get(str(level), 0)}" for level in [1, 2, 3]
+        )
+        self.score_var.set(f"v{GAME_VERSION} | Elige nivel | Records {records}")
         self.status_var.set("Presiona 1, 2 o 3")
         self.draw_level_menu()
 
@@ -165,9 +181,18 @@ class SnakeGame:
         self.food = None
         self.special_food = None
         self.special_food_ticks = 0
+        self.shield_power = None
+        self.shield_ticks = 0
+        self.lives = STARTING_LIVES
         self.ghost_tick = 0
         self.explosions = {}
         self.ghosts = self.create_ghosts()
+        self.boss_cells = set()
+        self.boss_active = False
+        self.boss_spawned = set()
+        self.boss_started_at = None
+        self.boss_tick = 0
+        self.started_at = time.monotonic()
         self.food = self.place_food()
         self.score = 0
         self.level = 1
@@ -199,21 +224,26 @@ class SnakeGame:
         new_head = (head_x + move_x, head_y + move_y)
         ate_food = new_head == self.food
         ate_special = new_head == self.special_food
+        ate_shield = new_head == self.shield_power
+        hit_bomb = self.hit_bomb(new_head)
+        hit_ghost = self.hit_ghost(new_head)
+        hit_boss = self.hit_boss(new_head)
 
-        if (
-            self.hit_wall(new_head)
-            or self.hit_bomb(new_head)
-            or self.hit_ghost(new_head)
-            or self.hit_obstacle(new_head)
-            or self.hit_self(new_head, grows=ate_food or ate_special)
-        ):
-            self.end_game(exploded=self.hit_bomb(new_head), caught=self.hit_ghost(new_head))
+        if self.hit_wall(new_head) or self.hit_obstacle(new_head):
+            self.end_game()
+            return
+        if hit_bomb or hit_ghost or hit_boss:
+            if not self.handle_danger_hit(new_head, hit_bomb, hit_ghost, hit_boss):
+                return
+        if self.hit_self(new_head, grows=ate_food or ate_special or ate_shield):
+            self.end_game()
             return
 
         self.snake.insert(0, new_head)
 
         if ate_food:
             self.score += 1
+            self.play_sound("eat")
             self.after_food_eaten()
             self.food = self.place_food()
             if self.game_over:
@@ -223,16 +253,31 @@ class SnakeGame:
             self.special_food = None
             self.special_food_ticks = 0
             self.after_food_eaten()
+            self.play_sound("bonus")
+        elif ate_shield:
+            self.shield_power = None
+            self.shield_ticks = SHIELD_TICKS
+            self.status_var.set("Escudo activado")
+            self.play_sound("shield")
         else:
             self.snake.pop()
 
         self.update_special_food_timer()
+        self.update_shield_timer()
         self.update_bombs()
         self.update_explosions()
+        self.update_boss()
+        if self.game_over:
+            return
+        if self.hit_boss(self.snake[0]):
+            if not self.handle_danger_hit(self.snake[0], False, False, True):
+                return
         self.maybe_spawn_bomb()
+        self.maybe_spawn_shield_power()
         if self.update_ghosts():
             self.end_game(caught=True)
             return
+        self.update_scoreboard()
         self.draw()
         self.schedule_tick()
 
@@ -252,6 +297,9 @@ class SnakeGame:
 
     def hit_ghost(self, position):
         return position in self.ghosts
+
+    def hit_boss(self, position):
+        return position in self.boss_cells
 
     def create_ghosts(self):
         corners = [
@@ -275,12 +323,16 @@ class SnakeGame:
         blocked.update(getattr(self, "bombs", {}).keys())
         blocked.update(getattr(self, "ghosts", []))
         blocked.update(getattr(self, "explosions", {}).keys())
+        blocked.update(getattr(self, "boss_cells", set()))
         food = getattr(self, "food", None)
         special_food = getattr(self, "special_food", None)
+        shield_power = getattr(self, "shield_power", None)
         if food:
             blocked.add(food)
         if special_food:
             blocked.add(special_food)
+        if shield_power:
+            blocked.add(shield_power)
 
         return [
             (x, y)
@@ -327,6 +379,23 @@ class SnakeGame:
             self.special_food = None
             self.status_var.set("Come la comida roja")
 
+    def update_shield_timer(self):
+        if self.shield_ticks <= 0:
+            return
+        self.shield_ticks -= 1
+        if self.shield_ticks <= 0:
+            self.status_var.set("Escudo terminado")
+
+    def maybe_spawn_shield_power(self):
+        if self.shield_power is not None or self.shield_ticks > 0:
+            return
+        if random.random() > SHIELD_CHANCE:
+            return
+        available_cells = self.available_cells()
+        if available_cells:
+            self.shield_power = random.choice(available_cells)
+            self.status_var.set("Escudo azul disponible")
+
     def update_bombs(self):
         expired_bombs = []
         for position in self.bombs:
@@ -346,6 +415,136 @@ class SnakeGame:
 
         for position in expired_explosions:
             del self.explosions[position]
+
+    def handle_danger_hit(self, position, hit_bomb, hit_ghost, hit_boss):
+        if self.shield_ticks > 0:
+            self.clear_danger(position, hit_bomb, hit_ghost, hit_boss)
+            self.explosions[position] = EXPLOSION_TICKS
+            self.status_var.set("El escudo te salvo")
+            self.play_sound("explode")
+            return True
+
+        self.lose_life(position, hit_bomb, hit_ghost, hit_boss)
+        return False
+
+    def clear_danger(self, position, hit_bomb, hit_ghost, hit_boss):
+        if hit_bomb and position in self.bombs:
+            del self.bombs[position]
+        if hit_ghost and position in self.ghosts:
+            self.ghosts.remove(position)
+        if hit_boss:
+            self.boss_cells.clear()
+            self.boss_active = False
+
+    def lose_life(self, position, hit_bomb=False, hit_ghost=False, hit_boss=False):
+        self.lives -= 1
+        self.clear_danger(position, hit_bomb, hit_ghost, hit_boss)
+        self.explosions[position] = EXPLOSION_TICKS
+        self.play_sound("hurt")
+
+        if self.lives <= 0:
+            self.end_game(exploded=hit_bomb or hit_boss, caught=hit_ghost)
+            return
+
+        self.status_var.set(f"Perdiste una vida | Vidas: {self.lives}")
+        self.draw()
+        self.schedule_tick()
+
+    def update_boss(self):
+        if self.selected_level != 3:
+            return
+
+        elapsed = int(time.monotonic() - self.started_at)
+        for boss_time in BOSS_TIMES:
+            if elapsed >= boss_time and boss_time not in self.boss_spawned:
+                self.spawn_boss(boss_time)
+                break
+
+        if not self.boss_active:
+            return
+
+        if time.monotonic() - self.boss_started_at >= BOSS_DURATION_SECONDS:
+            final_boss_defeated = 40 in self.boss_spawned and self.current_boss_time == 40
+            self.boss_cells.clear()
+            self.boss_active = False
+            self.play_sound("bonus")
+            if final_boss_defeated:
+                self.win_game()
+            else:
+                self.status_var.set("Sobreviviste al jefe")
+            return
+
+        self.boss_tick += 1
+        if self.boss_tick % BOSS_MOVE_EVERY == 0:
+            self.move_boss()
+
+    def spawn_boss(self, boss_time):
+        self.boss_spawned.add(boss_time)
+        self.current_boss_time = boss_time
+        self.boss_active = True
+        self.boss_started_at = time.monotonic()
+        self.boss_tick = 0
+        self.boss_cells = self.create_boss_cells()
+        if not self.boss_cells:
+            self.boss_active = False
+            return
+        self.status_var.set(f"Jefe de {boss_time} segundos")
+        self.play_sound("boss")
+
+    def create_boss_cells(self):
+        head_x, head_y = self.snake[0]
+        anchors = [
+            (1, 1),
+            (GRID_WIDTH - 3, 1),
+            (1, GRID_HEIGHT - 3),
+            (GRID_WIDTH - 3, GRID_HEIGHT - 3),
+        ]
+        anchors.sort(key=lambda cell: self.distance(cell, (head_x, head_y)), reverse=True)
+        for start_x, start_y in anchors:
+            cells = {
+                (start_x, start_y),
+                (start_x + 1, start_y),
+                (start_x, start_y + 1),
+                (start_x + 1, start_y + 1),
+            }
+            if self.can_boss_move_to(cells):
+                return cells
+        return set()
+
+    def move_boss(self):
+        if not self.boss_cells:
+            return
+        target = self.snake[0]
+        anchor = min(self.boss_cells)
+        candidates = [
+            (anchor[0] + 1, anchor[1]),
+            (anchor[0] - 1, anchor[1]),
+            (anchor[0], anchor[1] + 1),
+            (anchor[0], anchor[1] - 1),
+            anchor,
+        ]
+        candidates.sort(key=lambda cell: self.distance(cell, target))
+        for candidate in candidates:
+            cells = {
+                candidate,
+                (candidate[0] + 1, candidate[1]),
+                (candidate[0], candidate[1] + 1),
+                (candidate[0] + 1, candidate[1] + 1),
+            }
+            if self.can_boss_move_to(cells):
+                self.boss_cells = cells
+                return
+
+    def can_boss_move_to(self, cells):
+        blocked = set(self.snake[1:])
+        blocked.update(self.ghosts)
+        blocked.update(cell for cell in [self.food, self.special_food, self.shield_power] if cell is not None)
+        for x, y in cells:
+            if x < 0 or x >= GRID_WIDTH or y < 0 or y >= GRID_HEIGHT:
+                return False
+            if (x, y) in self.obstacles or (x, y) in self.bombs or (x, y) in blocked:
+                return False
+        return True
 
     def maybe_spawn_bomb(self):
         if self.score < self.config["bomb_min_score"]:
@@ -393,7 +592,10 @@ class SnakeGame:
                 new_ghosts.append(next_position)
             elif next_position in snake_body:
                 self.explosions[next_position] = EXPLOSION_TICKS
-                self.status_var.set("Un fantasmita exploto contra tu cuerpo")
+                self.lives = min(MAX_LIVES, self.lives + 1)
+                self.status_var.set("Fantasmita exploto: ganaste una vida")
+                self.play_sound("explode")
+                self.update_scoreboard()
             else:
                 new_ghosts.append(next_position)
 
@@ -430,8 +632,10 @@ class SnakeGame:
         return abs(first[0] - second[0]) + abs(first[1] - second[1])
 
     def update_scoreboard(self):
+        record = self.high_scores.get(str(self.selected_level), 0)
+        shield = f" | Escudo: {self.shield_ticks}" if self.shield_ticks > 0 else ""
         self.score_var.set(
-            f"v{GAME_VERSION} | Modo {self.selected_level} | Puntos: {self.score} | Ronda: {self.level} | Record: {self.high_score}"
+            f"v{GAME_VERSION} | Modo {self.selected_level} | Puntos: {self.score} | Vidas: {self.lives} | Record: {record}{shield}"
         )
 
     def on_key_press(self, event):
@@ -470,10 +674,12 @@ class SnakeGame:
 
     def end_game(self, exploded=False, caught=False):
         self.game_over = True
-        if self.score > self.high_score:
-            self.high_score = self.score
-            self.save_high_score()
+        level_key = str(self.selected_level)
+        if self.score > self.high_scores.get(level_key, 0):
+            self.high_scores[level_key] = self.score
+            self.save_high_scores()
             self.update_scoreboard()
+        self.play_sound("lose")
         if exploded:
             self.status_var.set("Boom | Presiona R para reiniciar")
         elif caught:
@@ -490,9 +696,14 @@ class SnakeGame:
 
     def win_game(self):
         self.game_over = True
+        level_key = str(self.selected_level)
+        if self.score > self.high_scores.get(level_key, 0):
+            self.high_scores[level_key] = self.score
+            self.save_high_scores()
+        self.play_sound("win")
         self.status_var.set("Ganaste | Presiona R para reiniciar")
         self.draw()
-        self.draw_overlay("GANASTE", "Llenaste todo el tablero", "Presiona R para reiniciar")
+        self.draw_overlay("GANASTE", "Superaste el reto", "R reinicia | L cambia nivel")
 
     def draw_level_menu(self):
         self.canvas.delete("all")
@@ -545,7 +756,7 @@ class SnakeGame:
             self.canvas.create_text(
                 left + 88,
                 y + 49,
-                text=description,
+                text=f"{description} | Record: {self.high_scores.get(number, 0)}",
                 anchor="w",
                 fill=MUTED_TEXT,
                 font=("Segoe UI", 10),
@@ -604,6 +815,9 @@ class SnakeGame:
         for explosion_position, ticks_left in self.explosions.items():
             self.draw_explosion(explosion_position, ticks_left)
 
+        for boss_cell in self.boss_cells:
+            self.draw_cell(boss_cell, BOSS, outline=BOSS_EDGE)
+
         for index, ghost in enumerate(self.ghosts):
             self.draw_ghost(ghost, index)
 
@@ -613,9 +827,15 @@ class SnakeGame:
         if self.special_food is not None:
             self.draw_cell(self.special_food, SPECIAL_FOOD, rounded=True)
 
+        if self.shield_power is not None:
+            self.draw_shield_power(self.shield_power)
+
         for index, segment in enumerate(self.snake):
             color = SNAKE_HEAD if index == 0 else SNAKE_BODY
             self.draw_cell(segment, color)
+
+        if self.shield_ticks > 0:
+            self.draw_active_shield()
 
         if self.paused and not self.game_over:
             self.draw_overlay("PAUSA", "Respira tantito", "Presiona espacio para continuar")
@@ -682,6 +902,36 @@ class SnakeGame:
             outline="",
         )
 
+    def draw_shield_power(self, position):
+        x, y = position
+        padding = 4
+        left = x * CELL_SIZE + padding
+        top = y * CELL_SIZE + padding
+        right = (x + 1) * CELL_SIZE - padding
+        bottom = (y + 1) * CELL_SIZE - padding
+        self.canvas.create_oval(left, top, right, bottom, fill=SHIELD_POWER, outline=SHIELD_RING, width=2)
+        self.canvas.create_text(
+            x * CELL_SIZE + CELL_SIZE // 2,
+            y * CELL_SIZE + CELL_SIZE // 2,
+            text="S",
+            fill=BACKGROUND,
+            font=("Segoe UI", 10, "bold"),
+        )
+
+    def draw_active_shield(self):
+        head_x, head_y = self.snake[0]
+        center_x = head_x * CELL_SIZE + CELL_SIZE // 2
+        center_y = head_y * CELL_SIZE + CELL_SIZE // 2
+        radius = CELL_SIZE // 2 + 5
+        self.canvas.create_oval(
+            center_x - radius,
+            center_y - radius,
+            center_x + radius,
+            center_y + radius,
+            outline=SHIELD_RING,
+            width=3,
+        )
+
     def draw_ghost(self, position, index):
         x, y = position
         padding = 3
@@ -699,17 +949,40 @@ class SnakeGame:
         self.canvas.create_oval(left + 5, top + 7, left + 9, top + 11, fill=GHOST_EYE, outline="")
         self.canvas.create_oval(right - 9, top + 7, right - 5, top + 11, fill=GHOST_EYE, outline="")
 
-    def load_high_score(self):
+    def load_high_scores(self):
+        default_scores = {"1": 0, "2": 0, "3": 0}
         try:
             with HIGH_SCORE_FILE.open("r", encoding="utf-8") as file:
                 data = json.load(file)
-                return int(data.get("high_score", 0))
+                if "high_scores" in data:
+                    scores = data["high_scores"]
+                else:
+                    scores = {"1": int(data.get("high_score", 0)), "2": 0, "3": 0}
+                default_scores.update({str(key): int(value) for key, value in scores.items()})
+                return default_scores
         except (FileNotFoundError, ValueError, json.JSONDecodeError):
-            return 0
+            return default_scores
 
-    def save_high_score(self):
+    def save_high_scores(self):
         with HIGH_SCORE_FILE.open("w", encoding="utf-8") as file:
-            json.dump({"high_score": self.high_score}, file)
+            json.dump({"high_scores": self.high_scores}, file)
+
+    def play_sound(self, sound_name):
+        sounds = {
+            "eat": (880, 55),
+            "bonus": (1175, 90),
+            "shield": (660, 120),
+            "explode": (220, 130),
+            "hurt": (160, 170),
+            "lose": (120, 260),
+            "win": (988, 180),
+            "boss": (330, 180),
+        }
+        frequency, duration = sounds.get(sound_name, (440, 60))
+        try:
+            winsound.Beep(frequency, duration)
+        except RuntimeError:
+            pass
 
 
 def main():

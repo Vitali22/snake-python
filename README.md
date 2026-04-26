@@ -1,6 +1,6 @@
 # Snake en Python
 
-Version actual: `1.3.0`
+Version actual: `1.4.0`
 
 Un juego de Snake hecho con `tkinter`, sin instalar paquetes extra.
 
@@ -24,14 +24,16 @@ Controles:
 
 - Nivel 1, Clasico: comida, obstaculos y bombas suaves
 - Nivel 2, Persecucion: un fantasmita lento te sigue
-- Nivel 3, Caos: dos fantasmitas mas activos y bombas con menos tiempo
-- Los fantasmitas explotan si chocan contra el cuerpo de la serpiente, pero te atrapan si llegan a la cabeza
+- Nivel 3, Caos: dos fantasmitas, bombas con menos tiempo y jefes a los 20, 30 y 40 segundos
+- Si sobrevives al jefe de los 40 segundos en nivel 3, ganas
+- Escudo azul: te protege por unos segundos de bombas, fantasmas y jefes
+- Los fantasmitas explotan si chocan contra el cuerpo de la serpiente, te dan una vida, pero te atrapan si llegan a la cabeza
 - Comida roja: suma 1 punto
 - Comida dorada: aparece por tiempo limitado y suma 3 puntos
 - Obstaculos: van apareciendo conforme subes tu puntuacion
 - Bombitas: aparecen de pronto cinco casillas adelante; cambia de camino o explotas
-- Niveles: la velocidad sube cada pocos puntos
-- Record: se guarda en `high_score.json`
+- Vidas: empiezas con 3 y puedes ganar mas
+- Records por nivel: se guardan en `high_score.json`
 
 Come, esquiva los obstaculos y busca superar tu record.
 
@@ -41,7 +43,7 @@ Para guardar cambios en Git:
 
 ```bash
 git add snake.py README.md CHANGELOG.md .gitignore
-git commit -m "Ajustar dificultad y fantasmas"
+git commit -m "Agregar escudo vidas sonidos y jefe"
 ```
 
 Para subirlos a GitHub:
